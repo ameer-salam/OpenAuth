@@ -3,9 +3,117 @@ import sqlite3
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import hashlib
 import base64
+import pyotp
+import time
+
+#corefunction to generate the OPT
+# Decode the secret key (assuming it's base32 or base64 encoded)
+def opt_gen(secret_key):
+    try:
+        decoded_key = base64.b32encode(secret_key.encode())
+    except Exception as e:
+        print("Failed to decode the secret key:", e)
+        return None
+
+    # Create a TOTP object using the decoded key
+    totp = pyotp.TOTP(decoded_key)
+
+    # Generate the current OTP
+    current_otp = totp.now()
+
+    return current_otp
 
 # Path to the user database
 user_db = "user.db"
+user_db_keys="user_keys.db"
+
+#insert the keys into the keys db
+def insert_into_keys_db(key, provider):
+    conn=sqlite3.connect(user_db_keys)
+    cursor=conn.cursor()
+    try: 
+        cursor.execute('''INSERT INTO user_keys(secret_key, provider) VALUES(?, ?)''', (key, provider))
+        conn.commit()
+        print("Key Added Successfully")
+    except sqlite3.IntegrityError:
+        print("Failed to insert the Key!")
+    finally:
+        conn.close()
+
+    return True
+
+
+#def to add new keys
+def add_new_key(key):
+    os.system("cls")
+    print("Remember to copy and paste the secret keys clearly : ")
+    provider=input("Enter the Provider/Service : ")
+    secret_key=input("Enter the Secret Keys : ")
+    encrypted_secret_key=encrypt_content(secret_key, key)
+    encrypted_provider=encrypt_content(provider, key)
+    key_insertion_status = insert_into_keys_db(encrypted_secret_key, encrypted_provider)
+    if key_insertion_status==True:
+        os.system('cls')
+        status=int(input("Enter another Key?\nIf yes! enter 1 else 0"))
+        if status==1:
+            add_new_key(key)
+        print("Displaying the Existing Keys: ")
+        display_keys(key)
+    
+
+#function to display the existing keys
+def display_keys(key):
+    conn=sqlite3.connect(user_db_keys)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM user_keys")
+    count=cursor.fetchone()[0]
+    if count==0:
+        print("No keys Exist!")
+        print("Enter your first key")
+        add_new_key(key)
+    else:
+        os.system("cls")  # Clear the console
+        print(f"The Keys existing are:")
+
+        cursor.execute('''SELECT * FROM user_keys''')
+        rows = cursor.fetchall()
+
+        if rows:
+            optio = ""
+            while not (optio == 'exit'):
+                os.system('cls')  # Clear the screen at the beginning of each loop
+                print("Keys in the database:")
+                
+                # Loop through and display each key with OTP
+                for row in rows:
+                    secret_key = decrypt_content(row[1], key)
+                    provider = decrypt_content(row[2], key)
+                    otp = opt_gen(secret_key)
+                    print(f"ID: {row[0]}, OTP: {otp}\t\t Provider: {provider}")
+                time.sleep(30)
+        else:
+            print("No keys found in the database.")
+    
+    conn.close()
+    display_keys(key)
+
+#function to check if the key database if not existing. if existing then connect
+def check_key_db():
+    conn = sqlite3.connect(user_db_keys)
+    cursor = conn.cursor()
+
+    # Create the table if it doesn't exist
+    cursor.execute('''CREATE TABLE IF NOT EXISTS user_keys(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    secret_key TEXT NOT NULL,
+                    provider TEXT NOT NULL)''')
+    
+    conn.commit()  # Ensure the creation is committed to the database
+    print("Key database checked or created if not existing")
+    
+    return conn  # Return the open connection for further operations
+
+
 
 # Function to check if user DB exists
 def get_user():
@@ -97,7 +205,11 @@ def main():
             key = input("Enter the Master Key to decript the Database: ")
             decrypted_username = decrypt_content(encrypted_user, key)
             if decrypt_content:
-                print(f"Decrypted Username: {decrypted_username}")
+                print(f"Logged into : {decrypted_username}")
+                conn=check_key_db()
+                display_keys(key)
+
+                conn.close()
             else:
                 print("Failed to decrypt the username. Incorrect key or corrupted data.")
         else:
